@@ -10,7 +10,8 @@ const config = {
     scrollAmount: () => 150 + Math.random() * 350,
     maxUnchangedScrolls: 15,
     startTime: "2025-01-16 09:03:45",
-    user: "hritikgupta7368"
+    user: "hritikgupta7368",
+    iframeTimeout : 5000
 };
 
 class EnhancedScraper {
@@ -22,6 +23,16 @@ class EnhancedScraper {
         this.lastPostCount = 0;
         this.processingPost = false;
         this.visitedPosts = new Set();
+    }
+    createIframe() {
+        const iframe = document.createElement('iframe');
+        iframe.style.width = '0';
+        iframe.style.height = '0';
+        iframe.style.border = 'none';
+        iframe.style.position = 'fixed';
+        iframe.style.top = '-999px';
+        iframe.style.left = '-999px';
+        return iframe;
     }
 
     async start() {
@@ -38,25 +49,50 @@ class EnhancedScraper {
         console.log('%c📥 Collection stopped. Data saved.', 'color: #ff9900; font-weight: bold;');
     }
 
-    async fetchFullPost(url) {
-        try {
-            const response = await fetch(url);
-            const html = await response.text();
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-            return doc.querySelector(config.selectors.postText)?.textContent?.trim() || null;
-        } catch (error) {
-            console.warn('Error fetching full post:', error);
-            return null;
-        }
+   
+    async getFullPostContent(url) {
+        return new Promise((resolve) => {
+            const iframe = this.createIframe();
+            let timeoutId;
+
+            const cleanup = () => {
+                if (timeoutId) clearTimeout(timeoutId);
+                if (iframe.parentNode) iframe.remove();
+            };
+
+            const handleLoad = () => {
+                try {
+                    const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                    const postText = iframeDoc.querySelector(config.selectors.postText);
+                    const fullText = postText ? postText.textContent.trim() : null;
+                    cleanup();
+                    resolve(fullText);
+                } catch (error) {
+                    console.warn('Error reading iframe content:', error);
+                    cleanup();
+                    resolve(null);
+                }
+            };
+
+            timeoutId = setTimeout(() => {
+                console.warn('Iframe loading timed out');
+                cleanup();
+                resolve(null);
+            }, config.iframeTimeout);
+
+            iframe.onload = handleLoad;
+            iframe.src = url;
+            document.body.appendChild(iframe);
+        });
     }
 
+    
     async handleShowMore(article, currentText) {
         try {
             const postUrl = article.querySelector(config.selectors.postLink)?.href;
             if (!postUrl || this.visitedPosts.has(postUrl)) return currentText;
 
-            const fullText = await this.fetchFullPost(postUrl);
+            const fullText = await this.getFullPostContent(postUrl);
             if (fullText) {
                 this.visitedPosts.add(postUrl);
                 return fullText;
@@ -81,25 +117,26 @@ class EnhancedScraper {
 
     async processPost(article) {
         try {
-            // Check if already processed
             if (article.getAttribute('data-processed')) return null;
 
-            // Get the post text element
+            let postText = '';
             const tweetTextElement = article.querySelector(config.selectors.postText);
-            if (!tweetTextElement) return null;
-
-            // Get initial text
-            let postText = tweetTextElement.textContent.trim();
-            if (!postText) return null;
-
-            // Check for show more and handle it
-            const hasShowMore = article.querySelector(config.selectors.showMoreLink);
-            if (hasShowMore) {
-                const expandedText = await this.handleShowMore(article, postText);
-                if (expandedText && expandedText.length > postText.length) {
-                    postText = expandedText;
+            const showMoreElement = article.querySelector(config.selectors.showMoreLink);
+            
+            if (tweetTextElement) {
+                postText = tweetTextElement.textContent.trim();
+                
+                if (showMoreElement) {
+                    console.log('🔍 Found "Show more" link, attempting to expand...');
+                    const fullText = await this.handleShowMore(article);
+                    if (fullText && fullText.length > postText.length) {
+                        console.log('📈 Post successfully expanded');
+                        postText = fullText;
+                    }
                 }
             }
+
+            if (!postText) return null;
 
             // Get other post data
             const timeElement = article.querySelector('time');
@@ -118,7 +155,7 @@ class EnhancedScraper {
                 collected_at: new Date().toISOString(),
                 collected_by: config.user,
                 collection_session_start: config.startTime,
-                is_expanded: hasShowMore ? true : false,
+                is_expanded: showMoreElement ? true : false,  // Fixed this line
                 text_length: postText.length
             };
 
@@ -127,6 +164,7 @@ class EnhancedScraper {
             return null;
         }
     }
+
 
     async collectPosts() {
         if (this.processingPost) return 0;
