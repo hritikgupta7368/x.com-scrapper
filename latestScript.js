@@ -4,15 +4,13 @@ const config = {
         postText: '[data-testid="tweetText"]',
         showMoreLink: '[data-testid="tweet-text-show-more-link"]',
         postLink: 'a[role="link"][href*="/status/"]',
-        repostHeader: '[data-testid="socialContext"]',
-        mainTweet: 'article[data-testid="tweet"]' // Selector for main tweet in individual post view
+        mainTweet: 'article[data-testid="tweet"]',
+        timestamp: 'time'
     },
-    scrollDelay: () => 1500 + Math.random() * 2500,
+    scrollDelay: () => 1500 + Math.random() * 2500, // 1.5-4 seconds between scrolls
     scrollAmount: () => 150 + Math.random() * 350,
     maxUnchangedScrolls: 15,
-    startTime: "2025-01-16 10:11:27",
-    user: "hritikgupta7368",
-    maxRetries: 3 // Maximum number of retries for failed expansions
+    startTime: "2025-01-16 10:30:13"
 };
 
 class EnhancedScraper {
@@ -24,7 +22,9 @@ class EnhancedScraper {
         this.lastPostCount = 0;
         this.processingPost = false;
         this.visitedPosts = new Set();
+        this.postCounter = 0; // Counter for posts
     }
+
     createIframe() {
         const iframe = document.createElement('iframe');
         iframe.style.width = '0';
@@ -184,6 +184,7 @@ class EnhancedScraper {
             let postText = '';
             const tweetTextElement = article.querySelector(config.selectors.postText);
             const showMoreElement = article.querySelector(config.selectors.showMoreLink);
+            const timeElement = article.querySelector(config.selectors.timestamp);
             
             if (tweetTextElement) {
                 postText = tweetTextElement.textContent.trim();
@@ -194,41 +195,24 @@ class EnhancedScraper {
                     if (fullText && fullText.length > postText.length) {
                         console.log('📈 Post expanded successfully');
                         postText = fullText;
-                    } else {
-                        console.warn('⚠️ Failed to expand post, using original text');
                     }
                 }
             }
 
-            if (!postText) {
-                console.warn('⚠️ No post text found');
-                return null;
-            }
+            if (!postText) return null;
 
-            // Get other post data
-            const timeElement = article.querySelector('time');
-            const postUrl = article.querySelector(config.selectors.postLink)?.href;
-            const repostInfo = article.querySelector(config.selectors.repostHeader)?.textContent?.trim();
-
-            // Mark as processed
-            article.setAttribute('data-processed', 'true');
+            // Increment counter for new posts
+            this.postCounter++;
 
             return {
+                index: this.postCounter,
                 text: postText,
-                url: postUrl,
-                repost_info: repostInfo || null,
-                post_timestamp: timeElement?.getAttribute('datetime') || new Date().toISOString(),
-                collected_at: new Date().toISOString(),
-                collected_by: config.user,
-                collection_session_start: config.startTime,
-                is_expanded: showMoreElement ? true : false,
-                text_length: postText.length,
-                expanded_length: postText.length > 0 ? postText.length : 0
+                timestamp: timeElement?.getAttribute('datetime') || null,
+                is_expanded: showMoreElement ? true : false
             };
 
         } catch (error) {
-            console.error('❌ Error processing post:', error);
-            this.stop(); // Stop the script on critical errors
+            console.warn('Error processing post:', error);
             return null;
         }
     }
@@ -239,18 +223,18 @@ class EnhancedScraper {
         this.processingPost = true;
 
         try {
-            const articles = Array.from(document.querySelectorAll(config.selectors.article));
+            const articles = document.querySelectorAll(config.selectors.article);
             let newCount = 0;
 
-            // Process posts sequentially
             for (const article of articles) {
                 const postData = await this.processPost(article);
                 if (postData) {
-                    const id = `${postData.url || postData.text.substring(0, 40)}_${postData.post_timestamp}`;
+                    // Use timestamp and text for unique ID
+                    const id = `${postData.timestamp}_${postData.text.substring(0, 40)}`;
                     if (!this.posts.has(id)) {
                         this.posts.set(id, postData);
                         newCount++;
-                        console.log(`📝 Collected post ${newCount}: ${postData.text.substring(0, 50)}...`);
+                        console.log(`📝 Post #${postData.index}: ${postData.text.substring(0, 50)}...`);
                     }
                 }
             }
@@ -259,17 +243,9 @@ class EnhancedScraper {
                 console.log(`📌 Found ${newCount} new posts. Total: ${this.posts.size}`);
             }
 
-            if (newCount === 0) {
-                this.unchangedCount++;
-            } else {
-                this.unchangedCount = 0;
-            }
-
             return newCount;
-
         } catch (error) {
-            console.error('❌ Fatal error collecting posts:', error);
-            this.stop(); // Stop the script on critical errors
+            console.error('Error collecting posts:', error);
             return 0;
         } finally {
             this.processingPost = false;
@@ -332,11 +308,13 @@ class EnhancedScraper {
     showStats() {
         const endTime = new Date();
         const duration = (endTime - this.startTime) / 1000;
+        const minutes = Math.floor(duration / 60);
+        const seconds = Math.floor(duration % 60);
         
         console.log('\n📊 Collection Statistics 📊');
         console.log('==========================');
         console.log(`📝 Total posts collected: ${this.posts.size}`);
-        console.log(`⏱️ Duration: ${duration.toFixed(2)} seconds`);
+        console.log(`⏱️ Time elapsed: ${minutes}m ${seconds}s`);
         console.log(`⚡ Collection rate: ${(this.posts.size / duration).toFixed(2)} posts/second`);
         console.log(`🔄 Expanded posts: ${this.visitedPosts.size}`);
         console.log('==========================\n');
